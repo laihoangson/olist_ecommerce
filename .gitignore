@@ -1,6 +1,8 @@
 venv/
 service-account.json
 .env
+.env.example
+outputs_dry_run/
 __pycache__/
 *.pyc
 *.pyo

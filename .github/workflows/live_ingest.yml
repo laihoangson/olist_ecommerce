@@ -1,0 +1,45 @@
+name: Phase B - Live ingest (every 6h)
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch: {}      # allow manual runs for testing
+
+jobs:
+  live-ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write service account key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > service-account.json
+
+      - name: Write .env
+        run: |
+          cat <<EOF > .env
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
+          BQ_LOCATION=${{ vars.BQ_LOCATION || 'US' }}
+          BQ_RAW_DATASET=olist_raw
+          BQ_BRONZE_DATASET=olist_bronze
+          HISTORICAL_STABLE_START=2017-01-01
+          HISTORICAL_STABLE_END=2018-08-31
+          BACKFILL_START_DATE=2024-01-01
+          BACKFILL_END_DATE=
+          SYNTHETIC_REPEAT_CUSTOMER_RATE=0.0312
+          GROWTH_RATE_PER_YEAR=1.0
+          PERTURBATION_STD=0.03
+          LIVE_BATCH_HOURS=6
+          EOF
+
+      - name: Run live ingest (processes any window(s) since last checkpoint)
+        run: python scripts/05_live_ingest.py

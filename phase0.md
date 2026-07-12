@@ -43,7 +43,7 @@ No transformation happens here. Everything is 1:1 with the source CSVs.
 
 Run in this order:
 
-### `scripts/01_load_raw_to_bigquery.py`
+### `scripts/00_load_raw_to_bigquery.py`
 One-time, immutable load of all 9 CSVs into `olist_raw`. Table names mirror
 the CSV filenames (e.g. `olist_orders_dataset`). By default the script
 **refuses to overwrite** a table that already has rows — this is intentional,
@@ -51,12 +51,12 @@ since `olist_raw` is meant to be immutable and only loaded once. Pass `--force`
 if you really need to reload (e.g. during initial development).
 
 ```bash
-python scripts/01_load_raw_to_bigquery.py
-python scripts/01_load_raw_to_bigquery.py --force   # only if you need to reload
-python scripts/01_load_raw_to_bigquery.py --dry-run # validate CSVs locally, skip BigQuery
+python scripts/00_load_raw_to_bigquery.py
+python scripts/00_load_raw_to_bigquery.py --force   # only if you need to reload
+python scripts/00_load_raw_to_bigquery.py --dry-run # validate CSVs locally, skip BigQuery
 ```
 
-### `scripts/02_eda_seasonality.py`
+### `scripts/01_eda_seasonality.py`
 Reads `olist_orders_dataset.csv` locally (no BigQuery needed) and produces
 time-based EDA: daily order volume over the full history, day-of-week
 distribution, hour-of-day distribution, monthly trend, and an explicit
@@ -64,10 +64,10 @@ flag of the Black Friday 2017 spike. Saves PNG charts + a JSON summary to
 `outputs/`.
 
 ```bash
-python scripts/02_eda_seasonality.py
+python scripts/01_eda_seasonality.py
 ```
 
-### `scripts/03_eda_distributions.py`
+### `scripts/02_eda_distributions.py`
 Reads orders + items + payments + reviews + products + customers locally.
 Produces: price/freight distribution overall and by product category,
 order_status proportions, payment_type proportions, review_score
@@ -77,7 +77,7 @@ distribution, delivery delay distribution, and a re-verification of the
 Saves PNG charts + a JSON summary to `outputs/`.
 
 ```bash
-python scripts/03_eda_distributions.py
+python scripts/02_eda_distributions.py
 ```
 
 ---

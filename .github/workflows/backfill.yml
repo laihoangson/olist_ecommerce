@@ -1,0 +1,61 @@
+name: Phase A - Backfill (manual trigger only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_days:
+        description: "Optional: cap number of days processed this run (leave blank for full range)"
+        required: false
+        default: ""
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write service account key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > service-account.json
+
+      - name: Write .env
+        run: |
+          cat <<EOF > .env
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
+          BQ_LOCATION=${{ vars.BQ_LOCATION || 'US' }}
+          BQ_RAW_DATASET=olist_raw
+          BQ_BRONZE_DATASET=olist_bronze
+          HISTORICAL_STABLE_START=2017-01-01
+          HISTORICAL_STABLE_END=2018-08-31
+          BACKFILL_START_DATE=2024-01-01
+          BACKFILL_END_DATE=
+          SYNTHETIC_REPEAT_CUSTOMER_RATE=0.0312
+          GROWTH_RATE_PER_YEAR=1.0
+          PERTURBATION_STD=0.03
+          LIVE_BATCH_HOURS=6
+          EOF
+
+      - name: NOTE - source CSVs
+        run: |
+          echo "This workflow assumes the 9 Olist CSVs are committed under data/"
+          echo "or fetched by a prior step. Adjust as needed for your repo setup."
+
+      - name: Run one-time historical load (idempotent, skips if already loaded)
+        run: python scripts/03_load_historical_to_bronze.py
+
+      - name: Run backfill
+        run: |
+          if [ -n "${{ github.event.inputs.max_days }}" ]; then
+            python scripts/04_backfill.py --max-days ${{ github.event.inputs.max_days }}
+          else
+            python scripts/04_backfill.py
+          fi

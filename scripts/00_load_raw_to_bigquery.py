@@ -10,9 +10,9 @@ Design intent (per project plan):
   layer intentionally does not enforce types yet (that happens in silver).
 
 Usage:
-    python scripts/01_load_raw_to_bigquery.py
-    python scripts/01_load_raw_to_bigquery.py --force
-    python scripts/01_load_raw_to_bigquery.py --dry-run
+    python scripts/00_load_raw_to_bigquery.py
+    python scripts/00_load_raw_to_bigquery.py --force
+    python scripts/00_load_raw_to_bigquery.py --dry-run
 """
 
 import argparse
