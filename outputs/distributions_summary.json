@@ -1,0 +1,161 @@
+{
+  "price_freight": {
+    "price_quantiles_brl": {
+      "p25": 39.9,
+      "p50_median": 74.99,
+      "p75": 134.9,
+      "p95": 349.9,
+      "mean": 120.65,
+      "std": 183.63
+    },
+    "freight_quantiles_brl": {
+      "p25": 13.08,
+      "p50_median": 16.27,
+      "p75": 21.15,
+      "p95": 45.23,
+      "mean": 20.03,
+      "std": 16.02
+    },
+    "top_15_categories_by_volume": [
+      {
+        "category": "bed_bath_table",
+        "count": 11115,
+        "median": 79.05,
+        "mean": 93.3
+      },
+      {
+        "category": "health_beauty",
+        "count": 9670,
+        "median": 79.9,
+        "mean": 130.16
+      },
+      {
+        "category": "sports_leisure",
+        "count": 8641,
+        "median": 78.0,
+        "mean": 114.34
+      },
+      {
+        "category": "furniture_decor",
+        "count": 8334,
+        "median": 65.49,
+        "mean": 87.56
+      },
+      {
+        "category": "computers_accessories",
+        "count": 7827,
+        "median": 81.99,
+        "mean": 116.51
+      },
+      {
+        "category": "housewares",
+        "count": 6964,
+        "median": 59.8,
+        "mean": 90.79
+      },
+      {
+        "category": "watches_gifts",
+        "count": 5991,
+        "median": 129.0,
+        "mean": 201.14
+      },
+      {
+        "category": "telephony",
+        "count": 4545,
+        "median": 29.99,
+        "mean": 71.21
+      },
+      {
+        "category": "garden_tools",
+        "count": 4347,
+        "median": 59.9,
+        "mean": 111.63
+      },
+      {
+        "category": "auto",
+        "count": 4235,
+        "median": 84.9,
+        "mean": 139.96
+      },
+      {
+        "category": "toys",
+        "count": 4117,
+        "median": 79.9,
+        "mean": 117.55
+      },
+      {
+        "category": "cool_stuff",
+        "count": 3796,
+        "median": 129.99,
+        "mean": 167.36
+      },
+      {
+        "category": "perfumery",
+        "count": 3419,
+        "median": 84.99,
+        "mean": 116.74
+      },
+      {
+        "category": "baby",
+        "count": 3065,
+        "median": 77.98,
+        "mean": 134.34
+      },
+      {
+        "category": "electronics",
+        "count": 2767,
+        "median": 21.9,
+        "mean": 57.91
+      }
+    ]
+  },
+  "order_status_proportions": {
+    "delivered": 0.9702,
+    "shipped": 0.0111,
+    "canceled": 0.0063,
+    "unavailable": 0.0061,
+    "invoiced": 0.0032,
+    "processing": 0.003,
+    "created": 0.0001,
+    "approved": 0.0
+  },
+  "payment_type_proportions": {
+    "credit_card": 0.7392,
+    "boleto": 0.1904,
+    "voucher": 0.0556,
+    "debit_card": 0.0147,
+    "not_defined": 0.0
+  },
+  "review_score": {
+    "overall_distribution": {
+      "1": 0.1151,
+      "2": 0.0318,
+      "3": 0.0824,
+      "4": 0.1929,
+      "5": 0.5778
+    },
+    "avg_score_by_delivery_status": {
+      "on_time_orders": 4.21,
+      "delayed_orders": 2.57
+    }
+  },
+  "delivery_delay": {
+    "delivered_orders_analyzed": 96470,
+    "delivery_days_quantiles": {
+      "p25": 6.77,
+      "p50_median": 10.22,
+      "p75": 15.72,
+      "p95": 29.27,
+      "mean": 12.56,
+      "std": 9.55
+    },
+    "pct_delivered_late_vs_estimate": 0.0811
+  },
+  "repeat_purchase_check": {
+    "total_unique_customers": 96096,
+    "one_time_customers": 93099,
+    "repeat_customers": 2997,
+    "pct_one_time_customers": 0.9688,
+    "plan_md_claim_96_88pct": "MATCHES within rounding"
+  }
+}
