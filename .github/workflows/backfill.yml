@@ -3,6 +3,14 @@ name: Phase A - Backfill (manual trigger only)
 on:
   workflow_dispatch:
     inputs:
+      start_date:
+        description: "Optional: window start date YYYY-MM-DD (leave blank to use config default / resume from state)"
+        required: false
+        default: ""
+      end_date:
+        description: "Optional: window end date YYYY-MM-DD (leave blank to use config default)"
+        required: false
+        default: ""
       max_days:
         description: "Optional: cap number of days processed this run (leave blank for full range)"
         required: false
@@ -54,8 +62,14 @@ jobs:
 
       - name: Run backfill
         run: |
-          if [ -n "${{ github.event.inputs.max_days }}" ]; then
-            python scripts/04_backfill.py --max-days ${{ github.event.inputs.max_days }}
-          else
-            python scripts/04_backfill.py
+          ARGS=""
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            ARGS="$ARGS --start-date ${{ github.event.inputs.start_date }}"
           fi
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          if [ -n "${{ github.event.inputs.max_days }}" ]; then
+            ARGS="$ARGS --max-days ${{ github.event.inputs.max_days }}"
+          fi
+          python scripts/04_backfill.py $ARGS
