@@ -74,7 +74,17 @@ def main():
             df.to_csv(out_path / f"{bronze_table}.csv", index=False)
             print(f"  [dry-run] {len(df):,} rows -> outputs_dry_run/{bronze_table}.csv")
         else:
-            bq_writer.upsert_dataframe(df, config.BQ_BRONZE_DATASET, bronze_table, keys)
+            # bq_writer has no upsert/MERGE (BQ sandbox rejects DML) — it only
+            # does idempotent load jobs keyed by batch_id. Historical load is
+            # one-time and one batch per table, so batch_id = table name is
+            # stable across re-runs and lets write_table's own
+            # already-loaded-skip logic handle retries.
+            bq_writer.write_table(
+                df,
+                config.BQ_BRONZE_DATASET,
+                bronze_table,
+                batch_id=f"historical_{bronze_table}",
+            )
 
     print("\nHistorical -> bronze load complete.")
 
