@@ -80,6 +80,11 @@ dbt parse      # validates the whole project (refs, sources, Jinja) resolves
 dbt run --select silver_customers   # try one model first
 dbt run                              # then the full DAG
 dbt test
+cd dbt
+python run_dbt.py deps
+python run_dbt.py parse
+python run_dbt.py run
+python run_dbt.py test
 ```
 
 ## 4. Design decisions — Phase 1 (recap)
