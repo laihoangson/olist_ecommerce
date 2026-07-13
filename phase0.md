@@ -30,7 +30,7 @@ No transformation happens here. Everything is 1:1 with the source CSVs.
 4. (Only needed for the BigQuery load script) Set up a GCP service account with
    BigQuery Data Editor + Job User roles, download its JSON key, then set:
    ```bash
-   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account.json"
+   export GOOGLE_APPLICATION_CREDENTIALS="service-account.json"
    export GCP_PROJECT_ID="your-gcp-project-id"
    export BQ_RAW_DATASET="olist_raw"
    export BQ_LOCATION="US"   # or your region, e.g. "asia-southeast1"
