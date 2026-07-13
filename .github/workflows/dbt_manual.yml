@@ -1,0 +1,138 @@
+name: dbt only (manual)
+
+# Runs ONLY dbt (deps -> run -> test) against whatever is currently in
+# olist_bronze — no Python ingestion, no new data. Safe to run anytime,
+# any number of times: every dbt model here is "table" materialization
+# (CREATE OR REPLACE TABLE AS SELECT), so each run is a full, clean rebuild
+# of silver/gold from bronze — never an append, so it can never duplicate
+# rows. Useful for: re-running dbt after editing a model, debugging a
+# failed test in isolation, or rebuilding gold without touching ingestion.
+
+on:
+  workflow_dispatch:
+    inputs:
+      select:
+        description: >
+          Optional dbt --select expression to run only part of the DAG
+          (e.g. "silver_customers+" or "gold.mart"). Leave blank to run
+          everything.
+        required: false
+        default: ""
+      command:
+        description: "Which dbt command to run"
+        required: false
+        default: "run"
+        type: choice
+        options:
+          - run
+          - test
+          - build
+          - run+test
+
+jobs:
+  dbt-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (includes dbt)
+        run: pip install -r requirements.txt
+
+      - name: Write service account key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > service-account.json
+
+      - name: Write .env
+        run: |
+          cat <<EOF > .env
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account.json
+          BQ_LOCATION=${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET=olist_bronze
+          BQ_SILVER_DATASET=olist_silver
+          BQ_GOLD_DATASET=olist_gold
+          EOF
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt run
+        if: ${{ github.event.inputs.command == 'run' || github.event.inputs.command == '' }}
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: |
+          if [ -n "${{ github.event.inputs.select }}" ]; then
+            dbt run --select "${{ github.event.inputs.select }}"
+          else
+            dbt run
+          fi
+
+      - name: dbt test
+        if: ${{ github.event.inputs.command == 'test' }}
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: |
+          if [ -n "${{ github.event.inputs.select }}" ]; then
+            dbt test --select "${{ github.event.inputs.select }}"
+          else
+            dbt test
+          fi
+
+      - name: dbt build (run + test together)
+        if: ${{ github.event.inputs.command == 'build' }}
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: |
+          if [ -n "${{ github.event.inputs.select }}" ]; then
+            dbt build --select "${{ github.event.inputs.select }}"
+          else
+            dbt build
+          fi
+
+      - name: dbt run then test
+        if: ${{ github.event.inputs.command == 'run+test' }}
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: |
+          if [ -n "${{ github.event.inputs.select }}" ]; then
+            dbt run --select "${{ github.event.inputs.select }}"
+            dbt test --select "${{ github.event.inputs.select }}"
+          else
+            dbt run
+            dbt test
+          fi

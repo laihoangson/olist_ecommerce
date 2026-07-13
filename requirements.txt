@@ -1,10 +1,15 @@
 pandas>=2.0.0
 numpy>=1.24.0
+
 python-dotenv>=1.0.0
 google-cloud-bigquery>=3.11.0
 db-dtypes>=1.1.0
 pyarrow>=14.0.0
-
+ 
 # Phase 2 — dbt (bronze -> silver -> gold)
-dbt-core>=1.7.0
-dbt-bigquery>=1.7.0
+# NOTE: pin >=1.8 — dbt-core 1.7.x has a known incompatibility with newer
+# protobuf (MessageToJson() got an unexpected keyword argument
+# 'including_default_value_fields'), which pip can silently resolve to on a
+# fresh CI runner. 1.8+ doesn't have this bug. Tested locally on 1.11.x.
+dbt-core>=1.8.0,<2.0.0
+dbt-bigquery>=1.8.0,<2.0.0
