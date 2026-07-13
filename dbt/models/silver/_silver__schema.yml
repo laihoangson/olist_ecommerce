@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: silver_customers
+    columns:
+      - name: customer_id
+        tests: [not_null, unique]
+      - name: customer_unique_id
+        tests: [not_null]
+
+  - name: silver_orders
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['delivered', 'shipped', 'canceled', 'unavailable',
+                         'invoiced', 'processing', 'created', 'approved']
+
+  - name: silver_order_items
+    columns:
+      - name: order_id
+        tests: [not_null]
+
+  - name: silver_order_payments
+    columns:
+      - name: order_id
+        tests: [not_null]
+
+  - name: silver_order_reviews
+    columns:
+      - name: review_id
+        tests: [not_null, unique]
+      - name: review_score
+        tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+
+  - name: silver_products
+    columns:
+      - name: product_id
+        tests: [not_null, unique]
+
+  - name: silver_sellers
+    columns:
+      - name: seller_id
+        tests: [not_null, unique]
+
+  - name: silver_geolocation
+    columns:
+      - name: geolocation_zip_code_prefix
+        tests: [not_null, unique]

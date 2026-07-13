@@ -62,34 +62,20 @@ def main():
                          help="Write to local CSVs instead of BigQuery, skip state tracking.")
     parser.add_argument("--max-days", type=int, default=None,
                          help="Optional cap on number of days to process this run (useful for smoke-testing).")
-    parser.add_argument("--start-date", type=str, default=None,
-                         help="Override config.BACKFILL_START_DATE (YYYY-MM-DD). If given, takes priority "
-                              "over the replay_cursor state resume too, so use it when you deliberately "
-                              "want to (re)run a specific window rather than continue from where state left off.")
-    parser.add_argument("--end-date", type=str, default=None,
-                         help="Override config.BACKFILL_END_DATE (YYYY-MM-DD).")
     args = parser.parse_args()
 
-    window_start = date.fromisoformat(args.start_date) if args.start_date else config.BACKFILL_START_DATE
-    window_end = date.fromisoformat(args.end_date) if args.end_date else config.BACKFILL_END_DATE
-
-    print(f"Backfill window: {window_start} .. {window_end}")
+    print(f"Backfill window: {config.BACKFILL_START_DATE} .. {config.BACKFILL_END_DATE}")
 
     historical_ref = HistoricalReference()
     historical_ref.load()
 
-    resume_from = window_start
+    resume_from = config.BACKFILL_START_DATE
     customer_pool = []
 
     if not args.dry_run:
         from replay import bq_writer
         last_state = bq_writer.get_state("replay_cursor")
-        # Only auto-resume from state when the caller didn't explicitly pin
-        # --start-date. This lets a chunked GH Actions run (e.g. one
-        # workflow_dispatch per month) rely on state for the *next*
-        # unspecified run, while an explicit --start-date always wins so you
-        # can deliberately re-run or fill a specific window.
-        if args.start_date is None and last_state is not None:
+        if last_state is not None:
             resume_from = last_state.date() + timedelta(days=1)
             print(f"[resume] Found existing replay_cursor state, resuming from {resume_from}.")
         customer_pool = bq_writer.fetch_synthetic_customer_pool()
@@ -98,7 +84,7 @@ def main():
     dry_run_dir = config.PROJECT_ROOT / "outputs_dry_run"
     days_processed = 0
 
-    for target_date in daterange(resume_from, window_end):
+    for target_date in daterange(resume_from, config.BACKFILL_END_DATE):
         if args.max_days is not None and days_processed >= args.max_days:
             print(f"[stop] Reached --max-days={args.max_days}.")
             break

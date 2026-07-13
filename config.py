@@ -71,7 +71,18 @@ RAW_FILES = {
     "olist_products_dataset": "olist_products_dataset.csv",
     "olist_sellers_dataset": "olist_sellers_dataset.csv",
     "olist_geolocation_dataset": "olist_geolocation_dataset.csv",
+    # Added for Phase 2: dim_products needs the English category names, and
+    # this table was missing from Phase 1's bronze load entirely.
+    "product_category_name_translation": "product_category_name_translation.csv",
 }
+
+# ---------------------------------------------------------------------------
+# Phase 2 (dbt): silver/gold dataset names. Bronze stays BQ_BRONZE_DATASET
+# (already defined above); dbt writes staging models into BQ_SILVER_DATASET
+# and fact/dim/mart models into BQ_GOLD_DATASET.
+# ---------------------------------------------------------------------------
+BQ_SILVER_DATASET = os.environ.get("BQ_SILVER_DATASET", "olist_silver")
+BQ_GOLD_DATASET = os.environ.get("BQ_GOLD_DATASET", "olist_gold")
 
 TIMESTAMP_COLUMNS = {
     "olist_orders_dataset": [

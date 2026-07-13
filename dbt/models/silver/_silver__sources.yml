@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: "{{ env_var('GCP_PROJECT_ID') }}"
+    schema: "{{ env_var('BQ_BRONZE_DATASET', 'olist_bronze') }}"
+    tables:
+      - name: bronze_customers
+      - name: bronze_orders
+      - name: bronze_order_items
+      - name: bronze_order_payments
+      - name: bronze_order_reviews
+      - name: bronze_products
+      - name: bronze_sellers
+      - name: bronze_geolocation
+      - name: bronze_product_category_translation

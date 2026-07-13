@@ -11,6 +11,13 @@ is_synthetic=false historical copy. This is a deliberate simplification —
 documented in README.md — since generating a fake product catalog adds
 complexity without adding realism.
 
+FREE-TIER / NO-BILLING SAFE: writes go through bq_writer.write_table(), which
+only uses load jobs + SELECT checks (no MERGE/DML, no streaming insert) — see
+bq_writer.py's docstring. All rows from this one-time load are tagged with
+batch_id="historical-load", so a re-run is automatically skipped per table
+instead of duplicating rows (same skip-if-already-loaded mechanism the
+backfill/live-ingest scripts use).
+
 Usage:
     python scripts/03_load_historical_to_bronze.py            # writes to BigQuery
     python scripts/03_load_historical_to_bronze.py --dry-run  # local only, no BigQuery
@@ -36,15 +43,19 @@ def load_csv(table_name: str) -> pd.DataFrame:
 
 
 TABLE_PLAN = [
-    # (source csv key, bronze table name, key columns for MERGE)
-    ("olist_customers_dataset", "bronze_customers", ["customer_id"]),
-    ("olist_orders_dataset", "bronze_orders", ["order_id"]),
-    ("olist_order_items_dataset", "bronze_order_items", ["order_id", "order_item_id"]),
-    ("olist_order_payments_dataset", "bronze_order_payments", ["order_id", "payment_sequential"]),
-    ("olist_order_reviews_dataset", "bronze_order_reviews", ["review_id"]),
-    ("olist_products_dataset", "bronze_products", ["product_id"]),
-    ("olist_sellers_dataset", "bronze_sellers", ["seller_id"]),
-    ("olist_geolocation_dataset", "bronze_geolocation", ["geolocation_zip_code_prefix"]),
+    # (source csv key, bronze table name)
+    ("olist_customers_dataset", "bronze_customers"),
+    ("olist_orders_dataset", "bronze_orders"),
+    ("olist_order_items_dataset", "bronze_order_items"),
+    ("olist_order_payments_dataset", "bronze_order_payments"),
+    ("olist_order_reviews_dataset", "bronze_order_reviews"),
+    ("olist_products_dataset", "bronze_products"),
+    ("olist_sellers_dataset", "bronze_sellers"),
+    ("olist_geolocation_dataset", "bronze_geolocation"),
+    # Added for Phase 2: needed by dbt's dim_products to resolve English
+    # category names. Was missing from Phase 1 — no is_synthetic concept
+    # applies here (pure lookup table), but we tag it False for consistency.
+    ("product_category_name_translation", "bronze_product_category_translation"),
 ]
 
 
@@ -57,34 +68,42 @@ def main():
     if not args.dry_run:
         from replay import bq_writer
 
-    for source_key, bronze_table, keys in TABLE_PLAN:
+    for source_key, bronze_table in TABLE_PLAN:
         print(f"Loading {source_key} ...")
         df = load_csv(source_key)
 
         # geolocation has no natural single-row key; dedup on zip prefix
-        # (keep first) so it merges cleanly.
+        # (keep first) so there's exactly one row per prefix.
         if bronze_table == "bronze_geolocation":
             df = df.drop_duplicates(subset=["geolocation_zip_code_prefix"], keep="first")
 
+        # bronze_orders needs a source_template_date column to match the
+        # schema that synthetic batches will later append (replay_engine
+        # tags every synthetic order with the historical day it was
+        # resampled from). Adding it here — NULL for all historical rows —
+        # means the column exists from the very first load, so Phase 2's
+        # dbt models can reference it directly without needing any
+        # schema-introspection workaround.
+        if bronze_table == "bronze_orders":
+            df["source_template_date"] = pd.NaT
+
         df["is_synthetic"] = False
+        batch_id = f"historical_{bronze_table}"
 
         if args.dry_run:
             out_path = config.PROJECT_ROOT / "outputs_dry_run"
             out_path.mkdir(exist_ok=True)
-            df.to_csv(out_path / f"{bronze_table}.csv", index=False)
-            print(f"  [dry-run] {len(df):,} rows -> outputs_dry_run/{bronze_table}.csv")
+            tagged = df.copy()
+            tagged["batch_id"] = batch_id
+            tagged.to_csv(out_path / f"{bronze_table}.csv", index=False)
+            print(f"  [dry-run] {len(tagged):,} rows -> outputs_dry_run/{bronze_table}.csv")
         else:
             # bq_writer has no upsert/MERGE (BQ sandbox rejects DML) — it only
             # does idempotent load jobs keyed by batch_id. Historical load is
             # one-time and one batch per table, so batch_id = table name is
             # stable across re-runs and lets write_table's own
             # already-loaded-skip logic handle retries.
-            bq_writer.write_table(
-                df,
-                config.BQ_BRONZE_DATASET,
-                bronze_table,
-                batch_id=f"historical_{bronze_table}",
-            )
+            bq_writer.write_table(df, config.BQ_BRONZE_DATASET, bronze_table, batch_id)
 
     print("\nHistorical -> bronze load complete.")
 

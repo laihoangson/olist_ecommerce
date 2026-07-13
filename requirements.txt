@@ -4,3 +4,7 @@ python-dotenv>=1.0.0
 google-cloud-bigquery>=3.11.0
 db-dtypes>=1.1.0
 pyarrow>=14.0.0
+
+# Phase 2 — dbt (bronze -> silver -> gold)
+dbt-core>=1.7.0
+dbt-bigquery>=1.7.0

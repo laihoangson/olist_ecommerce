@@ -1,0 +1,41 @@
+name: 'olist_ecommerce'
+version: '1.0.0'
+config-version: 2
+
+profile: 'olist_ecommerce'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  # Same stable-window boundaries used by the Phase 1 replay engine, kept
+  # here too in case a model ever needs to reason about "was this in the
+  # historical stable window" independent of is_synthetic.
+  historical_stable_start: '2017-01-01'
+  historical_stable_end: '2018-08-31'
+
+models:
+  olist_ecommerce:
+    silver:
+      +schema: "{{ env_var('BQ_SILVER_DATASET', 'olist_silver') }}"
+      # IMPORTANT: stays "table" (full CREATE OR REPLACE TABLE AS SELECT),
+      # NOT "incremental". Every dbt-bigquery incremental strategy (merge,
+      # insert_overwrite) compiles down to a MERGE statement under the hood
+      # — that's DML, and BigQuery sandbox (no billing) rejects all DML,
+      # exactly like the MERGE issue hit earlier in Phase 1. "table"
+      # materialization is CREATE OR REPLACE TABLE AS SELECT, which is DDL,
+      # not DML, so it works without billing. The dataset here is small
+      # enough (< 1M rows even with a year+ of synthetic data) that a full
+      # rebuild on every dbt run is fast and well within the free query-scan
+      # quota — this is a deliberate trade-off, not an oversight.
+      +materialized: table
+    gold:
+      +schema: "{{ env_var('BQ_GOLD_DATASET', 'olist_gold') }}"
+      +materialized: table
+      mart:
+        +materialized: table

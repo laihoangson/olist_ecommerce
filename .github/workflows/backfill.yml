@@ -1,16 +1,8 @@
-name: Phase A - Backfill (manual trigger only)
+name: Phase A - Backfill (manual trigger only) + dbt run
 
 on:
   workflow_dispatch:
     inputs:
-      start_date:
-        description: "Optional: window start date YYYY-MM-DD (leave blank to use config default / resume from state)"
-        required: false
-        default: ""
-      end_date:
-        description: "Optional: window end date YYYY-MM-DD (leave blank to use config default)"
-        required: false
-        default: ""
       max_days:
         description: "Optional: cap number of days processed this run (leave blank for full range)"
         required: false
@@ -28,7 +20,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install dependencies (includes dbt)
         run: pip install -r requirements.txt
 
       - name: Write service account key
@@ -38,10 +30,12 @@ jobs:
         run: |
           cat <<EOF > .env
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
+          GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account.json
           BQ_LOCATION=${{ vars.BQ_LOCATION || 'US' }}
           BQ_RAW_DATASET=olist_raw
           BQ_BRONZE_DATASET=olist_bronze
+          BQ_SILVER_DATASET=olist_silver
+          BQ_GOLD_DATASET=olist_gold
           HISTORICAL_STABLE_START=2017-01-01
           HISTORICAL_STABLE_END=2018-08-31
           BACKFILL_START_DATE=2024-01-01
@@ -57,19 +51,41 @@ jobs:
           echo "This workflow assumes the 9 Olist CSVs are committed under data/"
           echo "or fetched by a prior step. Adjust as needed for your repo setup."
 
-      - name: Run one-time historical load (idempotent, skips if already loaded)
+      - name: Run one-time historical load (skips per-table if already loaded)
         run: python scripts/03_load_historical_to_bronze.py
 
       - name: Run backfill
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.start_date }}" ]; then
-            ARGS="$ARGS --start-date ${{ github.event.inputs.start_date }}"
-          fi
-          if [ -n "${{ github.event.inputs.end_date }}" ]; then
-            ARGS="$ARGS --end-date ${{ github.event.inputs.end_date }}"
-          fi
           if [ -n "${{ github.event.inputs.max_days }}" ]; then
-            ARGS="$ARGS --max-days ${{ github.event.inputs.max_days }}"
+            python scripts/04_backfill.py --max-days ${{ github.event.inputs.max_days }}
+          else
+            python scripts/04_backfill.py
           fi
-          python scripts/04_backfill.py $ARGS
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt run (silver -> gold, full-refresh table rebuild)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: dbt run
+
+      - name: dbt test
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: dbt test
