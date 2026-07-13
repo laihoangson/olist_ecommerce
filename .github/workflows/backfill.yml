@@ -3,14 +3,35 @@ name: Phase A - Backfill (manual trigger only) + dbt run
 on:
   workflow_dispatch:
     inputs:
+      start_date:
+        description: >
+          Backfill start date (YYYY-MM-DD). Only matters for the VERY FIRST
+          run — once a checkpoint exists in pipeline_state, 04_backfill.py
+          auto-resumes from there and ignores this. Leave blank to use the
+          default (2024-01-01).
+        required: false
+        default: ""
+      end_date:
+        description: >
+          Backfill end date (YYYY-MM-DD), inclusive. Use this to cap how far
+          a single run goes, to stay under the job timeout — e.g. run
+          2024-01-01..2024-03-31 today, then 2024-04-01..2024-06-30 in the
+          next run (start_date is ignored on that 2nd run — it auto-resumes).
+          Leave blank to run all the way to today.
+        required: false
+        default: ""
       max_days:
-        description: "Optional: cap number of days processed this run (leave blank for full range)"
+        description: "Optional extra cap: max number of days processed this run, regardless of the date range above."
         required: false
         default: ""
 
 jobs:
   backfill:
     runs-on: ubuntu-latest
+    # Backfilling a full multi-year range one day at a time (each day does
+    # several BigQuery load-job + SELECT round trips) can run long. Bump this
+    # if you still hit the timeout even after chunking with start/end date.
+    timeout-minutes: 350
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -28,6 +49,9 @@ jobs:
 
       - name: Write .env
         run: |
+          START_DATE="${{ github.event.inputs.start_date }}"
+          END_DATE="${{ github.event.inputs.end_date }}"
+          START_DATE="${START_DATE:-2024-01-01}"
           cat <<EOF > .env
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
           GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account.json
@@ -38,13 +62,14 @@ jobs:
           BQ_GOLD_DATASET=olist_gold
           HISTORICAL_STABLE_START=2017-01-01
           HISTORICAL_STABLE_END=2018-08-31
-          BACKFILL_START_DATE=2024-01-01
-          BACKFILL_END_DATE=
+          BACKFILL_START_DATE=${START_DATE}
+          BACKFILL_END_DATE=${END_DATE}
           SYNTHETIC_REPEAT_CUSTOMER_RATE=0.0312
           GROWTH_RATE_PER_YEAR=1.0
           PERTURBATION_STD=0.03
           LIVE_BATCH_HOURS=6
           EOF
+          echo "Effective range for this run: start=${START_DATE} (ignored if a checkpoint already exists) end=${END_DATE:-today}"
 
       - name: NOTE - source CSVs
         run: |

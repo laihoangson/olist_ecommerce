@@ -44,7 +44,8 @@ HISTORICAL_STABLE_END = date.fromisoformat(
 # ---------------------------------------------------------------------------
 # Backfill (Phase A)
 # ---------------------------------------------------------------------------
-BACKFILL_START_DATE = date.fromisoformat(os.environ.get("BACKFILL_START_DATE", "2024-01-01"))
+_backfill_start_raw = os.environ.get("BACKFILL_START_DATE", "").strip()
+BACKFILL_START_DATE = date.fromisoformat(_backfill_start_raw) if _backfill_start_raw else date(2024, 1, 1)
 _backfill_end_raw = os.environ.get("BACKFILL_END_DATE", "").strip()
 BACKFILL_END_DATE = date.fromisoformat(_backfill_end_raw) if _backfill_end_raw else date.today()
 
