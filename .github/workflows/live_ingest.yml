@@ -1,13 +1,27 @@
-name: Phase B - Live ingest (every 6h) + dbt run
+name: Phase B - Live ingest + transform (every 6h)
+
+# Runs 05_live_ingest.py (bronze) then 06_live_transform.py (silver+gold),
+# both pure Python — NO dbt chained here anymore. dbt still owns
+# dim_customers/mart_customer_rfm/mart_daily_revenue, but on a DAILY
+# cadence (see daily_gold_refresh.yml), since those need a full recompute
+# and don't need 6h freshness. See live.md for the full rationale.
+#
+# ONE-TIME SETUP before this workflow's first scheduled run:
+#   1. Make sure `dbt run` (full, all models) has completed at least once
+#      (backfill.yml already does this after 04_backfill.py).
+#   2. Run: python scripts/06_live_transform.py --init-cursor "<that dbt run's timestamp>"
+#      This seeds live_transform_cursor so 06 doesn't try to reprocess
+#      everything dbt already built. See live.md step-by-step.
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # 00:00, 06:00, 12:00, 18:00 UTC
-  workflow_dispatch: {}      # allow manual runs for testing
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
 
 jobs:
   live-ingest-and-transform:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -17,7 +31,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (includes dbt)
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Write service account key
@@ -33,43 +47,11 @@ jobs:
           BQ_BRONZE_DATASET=olist_bronze
           BQ_SILVER_DATASET=olist_silver
           BQ_GOLD_DATASET=olist_gold
-          HISTORICAL_STABLE_START=2017-01-01
-          HISTORICAL_STABLE_END=2018-08-31
-          BACKFILL_START_DATE=2024-01-01
-          BACKFILL_END_DATE=
-          SYNTHETIC_REPEAT_CUSTOMER_RATE=0.0312
-          GROWTH_RATE_PER_YEAR=1.0
-          PERTURBATION_STD=0.03
           LIVE_BATCH_HOURS=6
           EOF
 
-      - name: Run live ingest (processes any window(s) since last checkpoint)
+      - name: Run live ingest (bronze)
         run: python scripts/05_live_ingest.py
 
-      - name: dbt deps
-        working-directory: dbt
-        run: dbt deps
-
-      - name: dbt run (silver -> gold, full-refresh table rebuild)
-        working-directory: dbt
-        env:
-          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
-          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
-          BQ_BRONZE_DATASET: olist_bronze
-          BQ_SILVER_DATASET: olist_silver
-          BQ_GOLD_DATASET: olist_gold
-        run: dbt run
-
-      - name: dbt test
-        working-directory: dbt
-        env:
-          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
-          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
-          BQ_BRONZE_DATASET: olist_bronze
-          BQ_SILVER_DATASET: olist_silver
-          BQ_GOLD_DATASET: olist_gold
-        run: dbt test
+      - name: Run live transform (silver + gold, Python)
+        run: python scripts/06_live_transform.py

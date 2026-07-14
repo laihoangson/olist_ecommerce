@@ -17,7 +17,7 @@ so this works without a billing account attached to the project.
 
 Usage:
     python scripts/05_live_ingest.py             # writes to BigQuery
-    python scripts/05_live_ingest.py --dry-run   # local CSVs only, no BigQuery/state
+    python scripts/05_live_ingest.py --dry-run --dry-run-since "2026-07-13T18:00:00+00:00"   # local CSVs only, no BigQuery/state
 """
 
 import argparse

@@ -144,6 +144,67 @@ def write_table(df: pd.DataFrame, dataset: str, table: str, batch_id: str):
     print(f"[bq_writer] Appended {len(df):,} rows into {table_id}.")
 
 
+def run_transform_query(sql: str, dataset: str, table: str, query_parameters=None):
+    """Runs `sql` as a BigQuery query job that writes its results directly
+    into `dataset.table`, server-side — used by scripts/06_live_transform.py
+    for the silver/gold bronze->silver->gold live cadence (Python replaces
+    dbt for this cadence; see live.md).
+
+    This is NOT a DML statement. A destination-table query job is the same
+    underlying mechanism as `CREATE TABLE AS SELECT` (a job, not an
+    INSERT/MERGE), so it works without a billing account attached, exactly
+    like write_table()'s load jobs. The difference from write_table() is
+    that the SELECT/transform happens entirely inside BigQuery — nothing is
+    pulled into Python — and `sql` is expected to already filter its source
+    tables down to just the new batch (via a `batch_id IN UNNEST(@batch_ids)`
+    predicate), so only a small slice of bytes is scanned per run instead of
+    the whole growing table. total_bytes_processed is logged so the quota
+    cost of every step is visible.
+    """
+    from google.cloud import bigquery
+
+    client = get_client()
+    ensure_dataset(dataset)
+    table_id = f"{config.GCP_PROJECT_ID}.{dataset}.{table}"
+    exists = table_exists(table_id)
+
+    job_config = bigquery.QueryJobConfig(
+        destination=table_id,
+        write_disposition="WRITE_APPEND" if exists else "WRITE_EMPTY",
+        query_parameters=query_parameters or [],
+    )
+    if exists:
+        # Same rationale as write_table(): older/historical tables (built by
+        # the initial dbt run) may not have every column this query
+        # produces, so let BigQuery add columns instead of erroring.
+        job_config.schema_update_options = [bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION]
+
+    query_job = client.query(sql, job_config=job_config)
+    query_job.result()
+    bytes_processed = query_job.total_bytes_processed or 0
+    print(
+        f"[bq_writer] {table}: appended via query job "
+        f"({bytes_processed / 1e9:.4f} GB processed)."
+    )
+    return bytes_processed
+
+
+def dry_run_query(sql: str, query_parameters=None) -> int:
+    """Validates `sql` and returns the bytes it WOULD process, without
+    running it or writing anything. Used by --dry-run in
+    scripts/06_live_transform.py."""
+    from google.cloud import bigquery
+
+    client = get_client()
+    job_config = bigquery.QueryJobConfig(
+        dry_run=True,
+        use_query_cache=False,
+        query_parameters=query_parameters or [],
+    )
+    query_job = client.query(sql, job_config=job_config)
+    return query_job.total_bytes_processed or 0
+
+
 STATE_TABLE = "pipeline_state"
 
 

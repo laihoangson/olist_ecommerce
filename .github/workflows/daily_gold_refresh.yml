@@ -1,0 +1,79 @@
+name: Daily gold aggregate refresh (dbt, dim_customers + marts)
+
+# Rebuilds ONLY the 3 gold models that are true cross-history aggregates and
+# therefore can't be correctly maintained by append (see 06_live_transform.py
+# module docstring and live.md): dim_customers (RFM snapshot — recency is
+# relative to the max order_purchase_timestamp across ALL customers, so it
+# can shift for every customer whenever any new order lands) and its
+# downstream mart_customer_rfm, plus mart_daily_revenue.
+#
+# Everything else (silver_*, fct_*) is handled every 6h by
+# scripts/06_live_transform.py in Python — this job does NOT touch those.
+#
+# Once a day is plenty: Power BI (Dashboard 1) refreshes on its own
+# schedule/manually, and the KMeans/repeat-purchase models train offline
+# from historical (is_synthetic=false) data, so neither consumer needs
+# RFM/segment freshness at 6h granularity.
+
+on:
+  schedule:
+    - cron: "0 0 */2 * *"
+  workflow_dispatch: {}
+
+jobs:
+  daily-gold-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (includes dbt)
+        run: pip install -r requirements.txt
+
+      - name: Write service account key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > service-account.json
+
+      - name: Write .env
+        run: |
+          cat <<EOF > .env
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account.json
+          BQ_LOCATION=${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET=olist_bronze
+          BQ_SILVER_DATASET=olist_silver
+          BQ_GOLD_DATASET=olist_gold
+          EOF
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt run (dim_customers + mart_customer_rfm + mart_daily_revenue only)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: dbt run --select dim_customers mart_customer_rfm mart_daily_revenue
+
+      - name: dbt test (same selection)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/service-account.json
+          BQ_LOCATION: ${{ vars.BQ_LOCATION || 'US' }}
+          BQ_BRONZE_DATASET: olist_bronze
+          BQ_SILVER_DATASET: olist_silver
+          BQ_GOLD_DATASET: olist_gold
+        run: dbt test --select dim_customers mart_customer_rfm mart_daily_revenue
