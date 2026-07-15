@@ -105,14 +105,28 @@ def _ds(dataset: str) -> str:
 # built by dbt, daily) read straight from these same silver tables.
 #
 # Source is filtered to `batch_id IN UNNEST(@batch_ids)` — bronze tables
-# always have batch_id; silver_orders/order_items/order_payments/
-# order_reviews keep batch_id in their output (matching the dbt models) so
-# gold queries below can filter on it too. silver_customers has no batch_id
-# in its dbt-defined schema, but that's fine: the replay engine only ever
-# writes a customer_id to bronze_customers ONCE (see replay_engine.py —
-# repeat customers reuse an existing customer_id, they don't get a new
-# bronze_customers row), so filtering bronze_customers by the new batch_ids
-# alone is already duplicate-safe with no target-side check needed.
+# always have batch_id. EVERY one of the 9 silver/gold steps below also
+# carries batch_id through to its own output, and — as of this fix —
+# dbt/models/silver/silver_customers.sql and
+# dbt/models/gold/fct_order_items.sql / fct_payments.sql / fct_reviews.sql
+# now select `batch_id` too (they originally didn't, since dbt itself has
+# no use for it). This is what lets process_window() check each step's OWN
+# destination table for "has this batch_id already landed here?"
+# independently, instead of checking one table (silver_orders) as a proxy
+# for whether all 9 steps finished.
+#
+# Getting dbt to select this column too (rather than relying only on
+# ALLOW_FIELD_ADDITION to have Python bolt it on after the fact) matters
+# because dbt's `table` materialization is CREATE OR REPLACE TABLE AS
+# SELECT: a full `dbt run` — e.g. the periodic reconciliation live.md #5
+# recommends — recreates these 4 tables from dbt's SELECT list exactly.
+# If batch_id weren't in that list, every reconciliation run would silently
+# wipe the column, and the next 06 run would see it as missing, treat every
+# batch as never-loaded, and duplicate-append. Selecting it from dbt too
+# means a full rebuild keeps the column populated (dbt just passes through
+# whatever batch_id each source row already carries — backfill-YYYY-MM-DD
+# for historical rows, live-YYYY-MM-DD-HH-HH for live ones), so
+# reconciliation and incremental Python appends can no longer conflict.
 # ---------------------------------------------------------------------------
 def silver_steps():
     bronze = _ds(config.BQ_BRONZE_DATASET)
@@ -136,7 +150,8 @@ def silver_steps():
                     CAST(customer_zip_code_prefix AS STRING) AS customer_zip_code_prefix,
                     TRIM(LOWER(customer_city)) AS customer_city,
                     UPPER(TRIM(customer_state)) AS customer_state,
-                    is_synthetic
+                    is_synthetic,
+                    batch_id
                 FROM deduped
                 WHERE rn = 1
             """,
@@ -302,7 +317,8 @@ def gold_steps():
             sql=f"""
                 SELECT
                     order_id, order_item_id, product_id, seller_id,
-                    shipping_limit_date, price, freight_value, is_synthetic
+                    shipping_limit_date, price, freight_value, is_synthetic,
+                    batch_id
                 FROM `{silver}.silver_order_items`
                 WHERE batch_id IN UNNEST(@batch_ids)
             """,
@@ -312,7 +328,8 @@ def gold_steps():
             sql=f"""
                 SELECT
                     order_id, payment_sequential, payment_type,
-                    payment_installments, payment_value, is_synthetic
+                    payment_installments, payment_value, is_synthetic,
+                    batch_id
                 FROM `{silver}.silver_order_payments`
                 WHERE batch_id IN UNNEST(@batch_ids)
             """,
@@ -328,7 +345,8 @@ def gold_steps():
                     review_answer_timestamp,
                     TIMESTAMP_DIFF(review_answer_timestamp, review_creation_date, HOUR) / 24.0
                         AS review_response_days,
-                    is_synthetic
+                    is_synthetic,
+                    batch_id
                 FROM `{silver}.silver_order_reviews`
                 WHERE batch_id IN UNNEST(@batch_ids)
             """,
@@ -339,7 +357,19 @@ def gold_steps():
 def process_window(batch_id: str, dry_run: bool) -> int:
     """Runs all silver + gold steps for one batch_id. Returns total bytes
     processed (for logging). Raises on any step failure — the caller must
-    not advance the checkpoint if this raises."""
+    not advance the checkpoint if this raises.
+
+    Each step is individually idempotent: before running it, we check
+    whether ITS OWN destination table already has this batch_id, and skip
+    just that step if so. This is deliberately NOT a single check done once
+    for the whole window (that used to check only silver_orders as a proxy
+    for all 9 steps) — a crash between two steps used to mean the retry
+    would see the proxy table as "done" and skip everything after it
+    forever, permanently losing whatever hadn't run yet with no error
+    surfaced anywhere. Checking per-step means a retry resumes exactly at
+    the step that didn't finish, re-running only what's actually missing,
+    and never double-appending a step that already succeeded.
+    """
     from google.cloud import bigquery
     from replay import bq_writer
 
@@ -347,14 +377,21 @@ def process_window(batch_id: str, dry_run: bool) -> int:
     total_bytes = 0
 
     for step in silver_steps() + gold_steps():
+        dataset = config.BQ_SILVER_DATASET if step["table"].startswith("silver_") else config.BQ_GOLD_DATASET
+
         if dry_run:
             total_bytes += bq_writer.dry_run_query(step["sql"], query_parameters=params)
             print(f"[dry-run] {step['table']}: SQL validated.")
-        else:
-            total_bytes += bq_writer.run_transform_query(
-                step["sql"], config.BQ_SILVER_DATASET if step["table"].startswith("silver_") else config.BQ_GOLD_DATASET,
-                step["table"], query_parameters=params,
-            )
+            continue
+
+        table_id = f"{config.GCP_PROJECT_ID}.{dataset}.{step['table']}"
+        if bq_writer.already_loaded_batch_ids(table_id, [batch_id]):
+            print(f"[{batch_id}] {step['table']}: already loaded, skipping this step.")
+            continue
+
+        total_bytes += bq_writer.run_transform_query(
+            step["sql"], dataset, step["table"], query_parameters=params,
+        )
 
     return total_bytes
 
@@ -426,7 +463,6 @@ def main():
                   f"(checkpoint={checkpoint.isoformat()}, replay_cursor={upper_bound.isoformat()}).")
         return
 
-    silver_orders_table_id = f"{config.GCP_PROJECT_ID}.{config.BQ_SILVER_DATASET}.silver_orders"
     total_bytes = 0
     latest_checkpoint = checkpoint
 
@@ -436,10 +472,13 @@ def main():
         window_end_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc) + \
             timedelta(hours=end_hour if end_hour != 24 else 24)
 
-        if not args.dry_run and bq_writer.already_loaded_batch_ids(silver_orders_table_id, [batch_id]):
-            print(f"[{batch_id}] already transformed, skipping.")
-            latest_checkpoint = window_end_dt
-            continue
+        # No upfront "is this whole window done?" check here anymore — every
+        # step inside process_window() now checks its OWN destination table
+        # individually and skips itself if already loaded. A window where
+        # every step is already done will just print 9 "already loaded"
+        # lines and cost 9 cheap metadata lookups instead of 1, which is a
+        # negligible price for making crash-recovery actually correct (see
+        # process_window()'s docstring).
 
         bytes_used = process_window(batch_id, args.dry_run)
         total_bytes += bytes_used

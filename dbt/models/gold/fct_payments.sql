@@ -6,5 +6,7 @@ select
     payment_type,
     payment_installments,
     payment_value,
-    is_synthetic
+    is_synthetic,
+    -- See the matching comment in silver_customers.sql.
+    batch_id
 from {{ ref('silver_order_payments') }}

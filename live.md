@@ -37,6 +37,7 @@ ngưỡng 90/180 ngày, không cần cập nhật trong-ngày.
 |---|---|---|
 | `replay/bq_writer.py` | Sửa | Thêm `run_transform_query()` (query job ghi thẳng vào bảng đích qua `destination` + `WRITE_APPEND` — **không phải DML**, cùng cơ chế với `CREATE TABLE AS SELECT`, nên chạy được không cần billing account) và `dry_run_query()` (ước lượng bytes scan mà không ghi gì, dùng cho `--dry-run`) |
 | `scripts/06_live_transform.py` | Mới | Script chính: tìm các batch (window) 6h chưa được transform, chạy SQL mirror 1:1 logic dbt cho từng bảng row-level, append vào silver/gold, rồi mới advance checkpoint riêng `live_transform_cursor` |
+| `dbt/models/silver/silver_customers.sql`, `dbt/models/gold/fct_order_items.sql`, `fct_payments.sql`, `fct_reviews.sql` | Sửa | Thêm `batch_id` vào SELECT list — 4 model này vốn không có cột này (dbt không cần), nhưng `06_live_transform.py` cần nó để check idempotency per-step. Không thêm vào dbt SQL sẽ khiến `dbt run` (full rebuild) xóa mất cột này — xem mục 5 |
 | `.github/workflows/live_ingest.yml` | Mới | Cron 6h: `05_live_ingest.py` → `06_live_transform.py`. **Không** còn `dbt run` ở đây nữa |
 | `.github/workflows/daily_gold_refresh.yml` | Mới | Cron 1 lần/ngày (00:00 UTC): `dbt run --select dim_customers mart_customer_rfm mart_daily_revenue` + `dbt test` cùng selection |
 | `phase2.md`, `backfill.yml`, `dbt_manual.yml` | Không đổi | `backfill.yml` vẫn chạy full `dbt run` một lần lúc backfill xong — đây chính là lần "seed" toàn bộ gold layer mà Python sẽ tiếp nối từ đó |
@@ -67,20 +68,29 @@ tương ứng (đã đối chiếu từng dòng khi viết). Đây là điểm c
 4. `fct_order_items`, `fct_payments`, `fct_reviews` ← passthrough từ silver
    tương ứng, lọc theo `batch_id`
 
-`silver_customers` không có cột `batch_id` trong output (giống hệt dbt) —
-không sao, vì replay engine chỉ ghi 1 dòng `bronze_customers` **đúng 1 lần**
-cho mỗi `customer_id` (khách mua lại không tạo dòng mới — xem
-`replay_engine.py`), nên lọc theo batch mới là đủ, không trùng lặp.
+`silver_customers`, `fct_order_items`, `fct_payments`, `fct_reviews` không
+có cột `batch_id` trong schema gốc do dbt tạo — script thêm cột này vào
+output của cả 4 bảng (qua `ALLOW_FIELD_ADDITION`, không cần migrate schema
+tay) để mọi bảng trong 9 bước đều check được idempotency, xem mục 4.
 
 ## 4. Idempotency (chạy lại không bị trùng dòng)
 
-Trước khi xử lý mỗi window, script kiểm tra `batch_id` đó đã có trong
-`silver_orders` chưa (`bq_writer.already_loaded_batch_ids`, cùng cơ chế
-`bronze` đã dùng) — nếu có, skip toàn bộ window đó (coi như đã xong) và
-advance checkpoint bình thường. Checkpoint (`live_transform_cursor`) chỉ
-được ghi **sau khi cả 9 bước của 1 window thành công** — nếu job bị crash
-giữa chừng, lần chạy sau sẽ retry lại đúng window đó từ đầu, được bảo vệ bởi
-kiểm tra `silver_orders` ở trên.
+Mỗi bước trong 9 bước tự kiểm tra `batch_id` đó đã có trong **bảng đích của
+chính nó** chưa (`bq_writer.already_loaded_batch_ids`) — nếu có thì bỏ qua
+đúng bước đó, không phải toàn bộ window. Trước đây script chỉ kiểm tra 1 lần
+duy nhất, dùng `silver_orders` (bước 2/9) làm đại diện cho cả window — có
+lỗi: nếu job crash sau khi `silver_orders` ghi xong nhưng trước bước cuối
+(`fct_reviews`), lần chạy sau sẽ thấy `silver_orders` đã có batch đó, hiểu
+nhầm cả window đã xong, skip luôn — các bước chưa kịp chạy (vd. `fct_reviews`)
+mất vĩnh viễn dữ liệu batch đó mà không có gì báo lỗi.
+
+Cách hiện tại (check theo từng bước) sửa đúng lỗi này: retry sau crash sẽ tự
+resume đúng từ bước còn dang dở, không mất dữ liệu và không ghi trùng vào
+các bước đã thành công trước đó (`WRITE_APPEND` không tự dedupe với dữ liệu
+đã có sẵn ở đích, nên đây là điều kiện bắt buộc, không chỉ là tối ưu).
+Checkpoint (`live_transform_cursor`) vẫn chỉ advance sau khi `process_window()`
+chạy xong toàn bộ 9 bước cho 1 window (mỗi bước hoặc chạy thật, hoặc tự xác
+định là đã xong và skip).
 
 ## 5. Rủi ro cần biết: logic bị duplicate ở 2 nơi
 
@@ -99,6 +109,35 @@ Cách giảm rủi ro:
   count / vài giá trị `is_delayed`, `delivery_days` giữa kết quả dbt-rebuild
   và bảng hiện tại (do Python append) trên cùng khoảng `is_synthetic=true`
   gần nhất — nếu lệch, đó là dấu hiệu 2 nơi logic đã trôi khỏi nhau.
+
+## 5b. Bug đã phát hiện & sửa: đối chiếu định kỳ tự phá vỡ idempotency
+
+Chính khuyến nghị "chạy full `dbt run` định kỳ để đối chiếu" ở mục 5 từng
+tạo ra 1 nghịch lý: `already_loaded_batch_ids()` trong `bq_writer.py` check
+sự tồn tại của cột `batch_id` trước — nếu cột không tồn tại, nó **im lặng
+trả về rỗng** (coi như chưa có batch nào được load), không raise lỗi:
+
+```python
+if not has_column(table_id, "batch_id"):
+    return set()
+```
+
+4 model dbt gốc (`silver_customers`, `fct_order_items`, `fct_payments`,
+`fct_reviews`) vốn **không** select `batch_id` (dbt không cần cột này, chỉ
+Python cần). Vì `materialized: table` = `CREATE OR REPLACE TABLE AS SELECT`,
+mỗi lần chạy full `dbt run` để đối chiếu như mục 5 khuyên, dbt **tái tạo lại
+đúng schema theo SELECT list của nó** — tức là xóa mất cột `batch_id` khỏi
+đúng 4 bảng mà idempotency-check của `06_live_transform.py` cần nhất. Lần
+`06` chạy kế tiếp sau đó: cả 4 bảng này đều bị coi là "chưa xử lý gì" cho
+mọi batch đang trong window bị retry → append trùng dữ liệu.
+
+**Đã sửa:** thêm `batch_id` vào SELECT của cả 4 file dbt trên (dbt chỉ
+truyền lại đúng giá trị `batch_id` sẵn có từ bronze — `backfill-YYYY-MM-DD`
+cho dữ liệu historical, `live-YYYY-MM-DD-HH-HH` cho dữ liệu live — không
+cần biết gì thêm về ý nghĩa cột này). Từ giờ, full `dbt run` đối chiếu định
+kỳ **không còn xóa mất cột tracking nữa**, mục 5 có thể làm bình thường mà
+không cần thêm bước thủ công nào (không cần chạy lại `--init-cursor` sau
+mỗi lần đối chiếu).
 
 ## 6. Setup lần đầu (migration từ pipeline cũ)
 
@@ -163,3 +202,9 @@ chỉ quét đúng batch mới.
 - **Muốn quay lại cách cũ tạm thời** (ví dụ để debug): chạy tay
   `dbt_manual.yml` với `command=run` (không select) — full rebuild vẫn hoạt
   động bình thường, không bị ảnh hưởng bởi các thay đổi ở đây.
+- **`06` báo append trùng / row count tăng bất thường sau 1 lần chạy
+  `dbt_manual.yml` đối chiếu**: kiểm tra 4 file `silver_customers.sql`,
+  `fct_order_items.sql`, `fct_payments.sql`, `fct_reviews.sql` có đang select
+  `batch_id` không — nếu ai đó revert lại bản cũ (thiếu cột này), full dbt
+  rebuild sẽ tái tạo lại bug ở mục 5b. Thêm lại cột, chạy `dbt run` full 1
+  lần nữa để khôi phục cột, không cần làm gì thêm.

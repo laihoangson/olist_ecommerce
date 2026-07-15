@@ -8,5 +8,7 @@ select
     review_answer_timestamp,
     timestamp_diff(review_answer_timestamp, review_creation_date, hour) / 24.0
         as review_response_days,
-    is_synthetic
+    is_synthetic,
+    -- See the matching comment in silver_customers.sql.
+    batch_id
 from {{ ref('silver_order_reviews') }}
