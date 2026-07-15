@@ -43,10 +43,19 @@ order_value as (
 ),
 
 reference_date as (
-    -- "as of" the most recent order in the data at the time dbt runs — not
-    -- CURRENT_DATE(), so recency stays meaningful even if this model isn't
-    -- rebuilt the same day new data lands.
-    select max(order_purchase_timestamp) as as_of_timestamp from order_value
+    -- One "as of" timestamp PER is_synthetic cohort, not one global value.
+    -- Historical and synthetic orders live on two unrelated timelines
+    -- (2016-2018 vs. 2024-onward) — a single global MAX() means the
+    -- moment synthetic/live data starts landing in silver_orders, every
+    -- historical customer's recency_days balloons to ~2800+ days (measured
+    -- against a "now" from 2026, not 2018) and gets labeled 'lost'
+    -- regardless of their real purchase behavior. Grouping by is_synthetic
+    -- keeps each cohort's recency meaningful relative to its own timeline.
+    select
+        is_synthetic,
+        max(order_purchase_timestamp) as as_of_timestamp
+    from order_value
+    group by is_synthetic
 ),
 
 customer_agg as (
@@ -84,4 +93,4 @@ select
     a.is_synthetic
 from customer_agg a
 join customer_profile p on p.customer_unique_id = a.customer_unique_id and p.rn = 1
-cross join reference_date r
+join reference_date r on r.is_synthetic = a.is_synthetic
