@@ -108,3 +108,5 @@ def require_gcp_project():
         raise RuntimeError(
             "GCP_PROJECT_ID is not set. Copy .env.example to .env and fill it in."
         )
+        
+PREDICTIONS_DATASET = os.environ.get("PREDICTIONS_DATASET", "olist_predictions")

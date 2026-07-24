@@ -1,0 +1,33 @@
+# Render.com deploy config for the Operations Command Center API.
+#
+# GOOGLE_APPLICATION_CREDENTIALS note: Render's free web service tier has no
+# persistent disk to upload a service-account.json to directly. Two options:
+#   1. Render's "Secret Files" feature (Dashboard -> your service -> Environment
+#      -> Secret Files) -- upload service-account.json there, it gets mounted
+#      at /etc/secrets/service-account.json; set GOOGLE_APPLICATION_CREDENTIALS
+#      to that path as a normal env var below.
+#   2. Store the whole JSON key as one env var (e.g. GCP_SA_KEY_JSON, same as
+#      the GitHub Actions secret already used elsewhere in this project) and
+#      add a small startup step that writes it to a temp file before uvicorn
+#      starts -- e.g. change startCommand to:
+#      "python -c \"import os,json; open('/tmp/sa.json','w').write(os.environ['GCP_SA_KEY_JSON'])\" && GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa.json uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+#
+# Cold start: Render's free tier spins down after ~15 min idle; the first
+# request after that takes 30-50s. Ping it periodically (e.g. a cron job
+# hitting /health every 10 min) if you want to avoid this for a live demo.
+
+services:
+  - type: web
+    name: olist-ops-api
+    env: python
+    buildCommand: "pip install -r api/requirements.txt"
+    startCommand: "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: GCP_PROJECT_ID
+        sync: false
+      - key: BQ_GOLD_DATASET
+        value: olist_gold
+      - key: PREDICTIONS_DATASET
+        value: olist_predictions
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false

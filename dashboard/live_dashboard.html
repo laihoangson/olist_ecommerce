@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Olist — Operations Command Center</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root { --navy:#1e2a45; --orange:#f47b20; --green:#1e8e3e; --red:#d93025; --amber:#e8a33d; --muted:#6b7280; --border:#e5e7eb; --bg:#f4f5f7; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#1f2937; }
+  header { background:var(--navy); color:#fff; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { margin:0; font-size:20px; }
+  header .cfg { display:flex; gap:8px; align-items:center; font-size:12px; }
+  header input { padding:5px 8px; border-radius:5px; border:none; width:280px; }
+  header button { padding:6px 12px; border-radius:5px; border:none; background:var(--orange); color:#fff; cursor:pointer; }
+  .updated { font-size:11px; color:#c6cbe0; }
+  main { padding:20px 24px; max-width:1400px; margin:0 auto; }
+  section { margin-bottom:28px; }
+  section h2 { font-size:16px; margin:0 0 4px; }
+  section .subtitle { font-size:12px; color:var(--muted); margin:0 0 12px; }
+  .grid { display:grid; gap:14px; }
+  .kpi-row { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+  .two-col { grid-template-columns:1fr 1fr; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:14px 16px; }
+  .kpi-value { font-size:24px; font-weight:700; }
+  .kpi-title { font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .kpi-delta { font-size:12px; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase; padding:6px 4px; border-bottom:1px solid var(--border); }
+  td { padding:6px 4px; border-bottom:1px solid #f0f1f3; }
+  .pill { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; }
+  .pill-critical{background:#fde8e6;color:var(--red);} .pill-high{background:#fdf0e3;color:#c2410c;}
+  .pill-medium{background:#fdf3e3;color:#b8860b;} .pill-low{background:#e6f4ea;color:var(--green);}
+  .tabs { display:flex; gap:6px; margin-bottom:10px; }
+  .tab-btn { padding:5px 10px; border-radius:5px; border:1px solid var(--border); background:#fff; font-size:12px; cursor:pointer; }
+  .tab-btn.active { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .error-note { font-size:12px; color:var(--red); background:#fde8e6; padding:8px 10px; border-radius:6px; }
+  canvas { max-width:100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Olist — Operations Command Center</h1>
+  <div class="cfg">
+    <span class="updated" id="updatedNote"></span>
+    <input id="apiBase" placeholder="API base URL, e.g. https://olist-ops-api.onrender.com" />
+    <button onclick="saveApiBaseAndReload()">Connect</button>
+  </div>
+</header>
+<main id="main">
+  <section id="sec-overview"></section>
+  <section id="sec-newOrders"></section>
+  <section id="sec-performance"></section>
+  <section id="sec-customers"></section>
+  <section id="sec-sellers"></section>
+</main>
+<script>
+let API_BASE = localStorage.getItem("ops_api_base") || "";
+document.getElementById("apiBase").value = API_BASE;
+
+function saveApiBaseAndReload() {
+  API_BASE = document.getElementById("apiBase").value.replace(/\/$/, "");
+  localStorage.setItem("ops_api_base", API_BASE);
+  loadAll();
+}
+
+const fmtBRL = v => v == null ? '—' : 'R$' + Number(v).toLocaleString('en-US', {maximumFractionDigits:0});
+const fmtPct = (v,d=1) => v == null ? '—' : (v*100).toFixed(d) + '%';
+const fmtNum = v => v == null ? '—' : Number(v).toLocaleString('en-US');
+const titleCase = s => (s||'').replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
+const COLORS = { navy:'#1e2a45', orange:'#f47b20', green:'#1e8e3e', red:'#d93025', amber:'#e8a33d' };
+const charts = {};
+function mkChart(id, cfg) {
+  const el = document.getElementById(id); if (!el) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(el.getContext('2d'), cfg);
+}
+
+async function api(path) {
+  if (!API_BASE) throw new Error("No API base URL set yet -- enter it above and click Connect.");
+  const res = await fetch(API_BASE + path);
+  if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+function errorCard(title, err) {
+  return `<div class="card"><h3 style="margin-top:0">${title}</h3><div class="error-note">${err.message}</div></div>`;
+}
+
+// ---------------------------------------------------------------- Section 1
+async function renderOverview() {
+  const el = document.getElementById('sec-overview');
+  try {
+    const d = await api('/api/overview');
+    const k = d.kpis;
+    const revDelta = (k.revenue_today && k.revenue_yesterday) ? (k.revenue_today - k.revenue_yesterday) / k.revenue_yesterday : null;
+    const ordDelta = (k.orders_today && k.orders_yesterday) ? (k.orders_today - k.orders_yesterday) / k.orders_yesterday : null;
+    el.innerHTML = `
+      <h2>Overview — Today</h2>
+      <p class="subtitle">Revenue/orders today vs yesterday, trend + forecast, breakdown by product & state</p>
+      <div class="grid kpi-row" style="margin-bottom:14px;">
+        <div class="card"><div class="kpi-title">Revenue Today</div><div class="kpi-value">${fmtBRL(k.revenue_today)}</div>
+          <div class="kpi-delta" style="color:${revDelta>=0?'var(--green)':'var(--red)'}">${revDelta==null?'—':(revDelta>=0?'▲':'▼')+' '+fmtPct(Math.abs(revDelta))} vs yesterday</div></div>
+        <div class="card"><div class="kpi-title">Orders Today</div><div class="kpi-value">${fmtNum(k.orders_today)}</div>
+          <div class="kpi-delta" style="color:${ordDelta>=0?'var(--green)':'var(--red)'}">${ordDelta==null?'—':(ordDelta>=0?'▲':'▼')+' '+fmtPct(Math.abs(ordDelta))} vs yesterday</div></div>
+      </div>
+      <div class="grid two-col" style="margin-bottom:14px;">
+        <div class="card"><h3 style="margin-top:0">Revenue Trend + Forecast (90d actual, +90d forecast)</h3><canvas id="ov-trend" height="180"></canvas></div>
+        <div class="card"><h3 style="margin-top:0">Revenue by State</h3><div id="ov-state"></div></div>
+      </div>
+      <div class="card"><h3 style="margin-top:0">Revenue by Category (top 10)</h3><div id="ov-cat"></div></div>
+    `;
+    const labels = [...d.trend.map(r=>r.ds), ...d.forecast.map(r=>r.ds)];
+    mkChart('ov-trend', { type:'line', data:{ labels, datasets:[
+      { label:'Actual Revenue', data:d.trend.map(r=>r.revenue), borderColor:COLORS.navy, backgroundColor:COLORS.navy, spanGaps:false },
+      { label:'Forecast', data:[...Array(d.trend.length).fill(null), ...d.forecast.map(r=>r.yhat)], borderColor:COLORS.orange, backgroundColor:COLORS.orange, borderDash:[5,5] },
+    ]}, options:{ interaction:{mode:'index'} } });
+    document.getElementById('ov-state').innerHTML = barList(d.by_state.slice(0,8), r=>r.state, r=>r.revenue, r=>fmtBRL(r.revenue));
+    document.getElementById('ov-cat').innerHTML = barList(d.by_category, r=>titleCase(r.category), r=>r.revenue, r=>fmtBRL(r.revenue));
+  } catch (e) { el.innerHTML = errorCard('Overview', e); }
+}
+
+function barList(rows, labelFn, valFn, valLabelFn) {
+  if (!rows.length) return '<p style="color:var(--muted);font-size:13px;">No data.</p>';
+  const max = Math.max(...rows.map(valFn));
+  return rows.map(r => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;">
+    <div style="width:140px;flex-shrink:0;">${labelFn(r)}</div>
+    <div style="flex:1;background:#eef0f3;border-radius:4px;height:18px;"><div style="background:var(--navy);height:100%;border-radius:4px;width:${Math.max(4,(valFn(r)/max)*100)}%"></div></div>
+    <div style="width:110px;text-align:right;font-weight:600;font-size:12px;">${valLabelFn(r)}</div>
+  </div>`).join('');
+}
+
+// ---------------------------------------------------------------- Section 2
+async function renderNewOrders() {
+  const el = document.getElementById('sec-newOrders');
+  try {
+    const [del, rev] = await Promise.all([api('/api/orders/delivery-risk'), api('/api/orders/negative-review-risk')]);
+    el.innerHTML = `
+      <h2>New Orders Needing Attention <span style="font-size:11px;color:var(--muted);font-weight:400;">(rescored every 6h)</span></h2>
+      <p class="subtitle">Delivery risk for open orders, negative-review risk for delivered-awaiting-review orders</p>
+      <div class="grid two-col">
+        <div class="card"><h3 style="margin-top:0">Delivery Risk</h3>${tierSummary(del.summary)}${riskTable(del.orders,'order_id',['risk_tier','main_category','customer_state'])}</div>
+        <div class="card"><h3 style="margin-top:0">Negative Review Risk</h3>${tierSummary(rev.summary)}${riskTable(rev.orders,'order_id',['risk_tier','main_category','was_delayed'])}</div>
+      </div>
+    `;
+  } catch (e) { el.innerHTML = errorCard('New Orders', e); }
+}
+function tierSummary(summary) {
+  const order = {Critical:0, High:1, Medium:2, Low:3};
+  const sorted = [...summary].sort((a,b)=>(order[a.risk_tier]??9)-(order[b.risk_tier]??9));
+  return '<div style="margin-bottom:10px;">' + sorted.map(s=>`<span class="pill pill-${s.risk_tier.toLowerCase()}" style="margin-right:6px;">${s.risk_tier}: ${s.n}</span>`).join('') + '</div>';
+}
+function riskTable(rows, idCol, cols) {
+  if (!rows.length) return '<p style="color:var(--muted);font-size:13px;">No orders in this state right now.</p>';
+  return `<table><thead><tr><th>${idCol}</th>${cols.map(c=>`<th>${c}</th>`).join('')}<th>score</th></tr></thead><tbody>
+    ${rows.slice(0,15).map(r=>`<tr><td>${String(r[idCol]).slice(0,8)}</td>${cols.map(c=>`<td>${c==='risk_tier'?`<span class="pill pill-${r[c].toLowerCase()}">${r[c]}</span>`:r[c]}</td>`).join('')}<td>${(r.risk_score*100).toFixed(1)}%</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+// ---------------------------------------------------------------- Section 3
+async function renderPerformance() {
+  const el = document.getElementById('sec-performance');
+  try {
+    const [delivery, revw] = await Promise.all([api('/api/delivery-performance'), api('/api/reviews')]);
+    el.innerHTML = `
+      <h2>Delivery Performance & Reviews (actuals)</h2>
+      <p class="subtitle">Daily and weekly on-time rate, avg delivery days, review score, negative-review rate</p>
+      <div class="tabs">
+        <button class="tab-btn active" data-g="daily" onclick="switchPerfGranularity('daily')">Daily</button>
+        <button class="tab-btn" data-g="weekly" onclick="switchPerfGranularity('weekly')">Weekly</button>
+      </div>
+      <div class="grid two-col">
+        <div class="card"><h3 style="margin-top:0">On-Time Rate & Avg Delivery Days</h3><canvas id="perf-delivery" height="180"></canvas></div>
+        <div class="card"><h3 style="margin-top:0">Review Score & Negative Rate</h3><canvas id="perf-reviews" height="180"></canvas></div>
+      </div>
+    `;
+    window._perfData = { delivery, revw };
+    drawPerfCharts('daily');
+  } catch (e) { el.innerHTML = errorCard('Delivery Performance & Reviews', e); }
+}
+function switchPerfGranularity(g) {
+  document.querySelectorAll('#sec-performance .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.g === g));
+  drawPerfCharts(g);
+}
+function drawPerfCharts(g) {
+  const { delivery, revw } = window._perfData;
+  const dd = delivery[g], rd = revw[g];
+  const xKey = g === 'daily' ? 'ds' : 'week_start';
+  mkChart('perf-delivery', { type:'bar', data:{ labels:dd.map(r=>r[xKey]), datasets:[
+    { type:'line', label:'On-Time Rate', data:dd.map(r=>r.on_time_rate), borderColor:COLORS.green, backgroundColor:COLORS.green, yAxisID:'y' },
+    { type:'bar', label:'Avg Delivery Days', data:dd.map(r=>r.avg_delivery_days), backgroundColor:COLORS.navy, yAxisID:'y1' },
+  ]}, options:{ scales:{ y:{position:'left', ticks:{callback:v=>(v*100).toFixed(0)+'%'}}, y1:{position:'right', grid:{drawOnChartArea:false}} } } });
+  mkChart('perf-reviews', { type:'bar', data:{ labels:rd.map(r=>r[xKey]), datasets:[
+    { type:'line', label:'Avg Review Score', data:rd.map(r=>r.avg_score), borderColor:COLORS.orange, backgroundColor:COLORS.orange, yAxisID:'y' },
+    { type:'bar', label:'Negative Rate', data:rd.map(r=>r.negative_rate), backgroundColor:COLORS.red, yAxisID:'y1' },
+  ]}, options:{ scales:{ y:{position:'left', min:1, max:5}, y1:{position:'right', grid:{drawOnChartArea:false}, ticks:{callback:v=>(v*100).toFixed(0)+'%'}} } } });
+}
+
+// ---------------------------------------------------------------- Section 4
+async function renderCustomers() {
+  const el = document.getElementById('sec-customers');
+  try {
+    const d = await api('/api/customers');
+    el.innerHTML = `
+      <h2>Customer Actions <span style="font-size:11px;color:var(--muted);font-weight:400;">(rescored daily)</span></h2>
+      <p class="subtitle">Segment, repeat-purchase probability, predicted incremental value, suggested voucher/retention action</p>
+      <div class="card">
+        <div style="margin-bottom:10px;">${d.summary.map(s=>`<span class="pill pill-medium" style="margin-right:6px;">${s.suggested_action}: ${s.n}</span>`).join('')}</div>
+        <table><thead><tr><th>customer</th><th>state</th><th>segment</th><th>predicted incr. value</th><th>action</th></tr></thead><tbody>
+          ${d.customers.slice(0,20).map(r=>`<tr><td>${r.customer_unique_id.slice(0,8)}</td><td>${r.customer_state}</td><td>${r.segment}</td>
+            <td>${fmtBRL(r.predicted_incremental_value)}</td><td>${r.suggested_action}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    `;
+  } catch (e) { el.innerHTML = errorCard('Customer Actions', e); }
+}
+
+// ---------------------------------------------------------------- Section 5
+async function renderSellers() {
+  const el = document.getElementById('sec-sellers');
+  try {
+    const d = await api('/api/sellers');
+    el.innerHTML = `
+      <h2>Seller Performance <span style="font-size:11px;color:var(--muted);font-weight:400;">(rescored daily)</span></h2>
+      <p class="subtitle">Segment (lifetime) + today/this-week operational metrics</p>
+      <div class="card">
+        <div style="margin-bottom:10px;">${d.summary.map(s=>`<span class="pill pill-medium" style="margin-right:6px;">${s.segment}: ${s.n}</span>`).join('')}</div>
+        <table><thead><tr><th>seller</th><th>segment</th><th>orders today</th><th>revenue today</th><th>orders this week</th><th>revenue this week</th><th>on-time (week)</th></tr></thead><tbody>
+          ${d.sellers.slice(0,20).map(r=>`<tr><td>${r.seller_id.slice(0,8)}</td><td>${r.segment}</td><td>${fmtNum(r.orders_today)}</td>
+            <td>${fmtBRL(r.revenue_today)}</td><td>${fmtNum(r.orders_this_week)}</td><td>${fmtBRL(r.revenue_this_week)}</td>
+            <td>${r.delay_rate_this_week==null?'—':fmtPct(1-r.delay_rate_this_week)}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    `;
+  } catch (e) { el.innerHTML = errorCard('Seller Performance', e); }
+}
+
+async function loadAll() {
+  document.getElementById('updatedNote').textContent = 'Loading...';
+  await Promise.all([renderOverview(), renderNewOrders(), renderPerformance(), renderCustomers(), renderSellers()]);
+  document.getElementById('updatedNote').textContent = 'Last refreshed ' + new Date().toLocaleTimeString();
+}
+
+if (API_BASE) loadAll();
+setInterval(() => { if (API_BASE) loadAll(); }, 5 * 60 * 1000); // auto-refresh every 5 min
+</script>
+</body>
+</html>

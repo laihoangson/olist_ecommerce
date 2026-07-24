@@ -1,0 +1,30 @@
+name: Daily Customer & Seller Scoring
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 2 * * *"   # once/day, off-peak
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: pip install joblib xgboost
+      - name: Write service account key
+        run: echo '${{ secrets.GCP_SA_KEY_JSON }}' > service-account.json
+      - name: Write .env
+        run: |
+          cat <<EOF > .env
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS=${{ github.workspace }}/service-account.json
+          BQ_GOLD_DATASET=olist_gold
+          PREDICTIONS_DATASET=olist_predictions
+          EOF
+      - run: python scripts/10_daily_customer_scoring.py
+      - run: python scripts/11_daily_seller_scoring.py
